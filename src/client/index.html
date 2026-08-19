@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Break Monitor</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.4 1.6M9 2h6"/></svg></span>
+      <span id="siteName">Break Monitor</span>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-kiosk" aria-selected="true">Staff</button>
+      <button role="tab" id="tab-mgr" aria-selected="false">Director</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="conn" id="conn"><span class="d2"></span><span id="connTxt">Connecting…</span></div>
+    <div class="chip"><span class="clock num" id="wallclock">--:--</span></div>
+  </header>
+
+  <main>
+    <!-- ================= EMPLOYEE ================= -->
+    <section id="view-kiosk">
+      <div class="kiosk hidden" id="k-lock">
+        <div class="kiosk-head">
+          <h1>Who's signing in?</h1>
+          <p>Tap your name, then enter your 4-digit PIN.</p>
+        </div>
+        <div class="people" id="peopleGrid"></div>
+        <div class="empty hidden" id="noStaff">
+          No coworkers yet. A manager can add them under <b>Director → Staff</b>, or they can be added in the Supabase <code>coworkers</code> table.
+        </div>
+      </div>
+
+      <div class="kiosk hidden" id="k-pin">
+        <div class="kiosk-head">
+          <h1 id="pinName">Enter PIN</h1>
+          <p id="pinDept" class="mut"></p>
+        </div>
+        <div class="pinwrap">
+          <div class="pin-dots" id="pinDots"><span></span><span></span><span></span><span></span></div>
+          <div class="pad" id="pinPad"></div>
+          <div class="err" id="pinErr"></div>
+          <button class="btn ghost" style="margin-top:8px" id="pinBack">← Back to staff list</button>
+        </div>
+      </div>
+
+      <div class="kiosk hidden" id="k-home">
+        <div class="card home-card" id="homeCard"></div>
+      </div>
+    </section>
+
+    <!-- ================= MANAGER ================= -->
+    <section id="view-mgr" class="hidden">
+      <div class="gate hidden" id="m-gate">
+        <div class="lock"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h1>Director dashboard</h1>
+        <p>Enter the manager PIN to view live break activity.</p>
+        <div class="pin-dots" id="mgrDots"><span></span><span></span><span></span><span></span></div>
+        <div class="pad" id="mgrPad"></div>
+        <div class="err" id="mgrErr"></div>
+      </div>
+
+      <div class="hidden" id="m-board">
+        <div class="subtabs" role="tablist">
+          <button role="tab" data-pane="live"    aria-selected="true">Live floor</button>
+          <button role="tab" data-pane="history" aria-selected="false">History</button>
+          <button role="tab" data-pane="late"    aria-selected="false" class="tab-late">Late breaks<span class="late-count hidden" id="lateTabCount"></span></button>
+          <button role="tab" data-pane="staff"   aria-selected="false">Staff</button>
+          <button role="tab" data-pane="setup"   aria-selected="false">Settings</button>
+        </div>
+
+        <!-- live -->
+        <div data-pane-body="live">
+          <div class="banner" id="overBanner"><span class="ic">!</span><span id="overBannerTxt"></span></div>
+          <div class="tiles" id="tiles"></div>
+          <div class="live-stack">
+            <div class="card">
+              <div class="card-h">
+                <h2>Live floor status</h2><span class="sub" id="rosterSub"></span>
+                <div style="flex:1"></div>
+                <span class="chip"><span class="dot"></span>Live</span>
+              </div>
+              <table>
+                <thead><tr><th>Employee</th><th>Where</th><th>Status</th><th>Break</th><th>Started</th><th>Remaining</th><th class="right">Action</th></tr></thead>
+                <tbody id="rosterBody"></tbody>
+              </table>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>Today's break history</h2><div style="flex:1"></div><span class="sub" id="histCount"></span></div>
+              <table>
+                <thead><tr><th>Started</th><th>Ended</th><th>Staff</th><th>Where</th><th>Allowance</th><th>Taken</th><th>Result</th></tr></thead>
+                <tbody id="histBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- history -->
+        <div data-pane-body="history" class="hidden">
+          <div class="card">
+            <div class="card-h">
+              <h2>Break records</h2>
+              <div style="flex:1"></div>
+              <span class="sub">Show</span>
+              <select id="histDays" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--bg);color:var(--ink)">
+                <option value="1">Today</option><option value="7" selected>Last 7 days</option>
+                <option value="30">Last 30 days</option><option value="90">Last 90 days</option>
+              </select>
+              <button class="mini-btn" id="histCsv">Export CSV</button>
+            </div>
+            <table>
+              <thead><tr><th>Date</th><th>Staff</th><th>Where</th><th>Allowance</th><th>Started</th><th>Ended</th><th>Taken</th><th>Result</th></tr></thead>
+              <tbody id="histTable"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- late -->
+        <div data-pane-body="late" class="hidden">
+          <div class="card late-card">
+            <div class="card-h late-head">
+              <h2>Late breaks</h2>
+              <span class="sub" id="lateCount"></span>
+              <div style="flex:1"></div>
+              <button class="mini-btn late-today on" id="lateToday" type="button">Today</button>
+              <label class="date-field"><span>From</span><input type="date" id="lateFrom"></label>
+              <label class="date-field"><span>To</span><input type="date" id="lateTo"></label>
+              <button class="mini-btn" id="lateCsv">Export CSV</button>
+            </div>
+            <div class="late-table-wrap" id="lateWrap">
+              <div class="late-busy hidden" id="lateBusy" aria-live="polite" aria-busy="false">
+                <div class="spin"></div>
+                <span>Loading late breaks…</span>
+              </div>
+              <table>
+                <thead><tr><th>Date</th><th>Staff</th><th>Where</th><th>Allowance</th><th>Started</th><th>Ended</th><th>Taken</th><th>Over</th></tr></thead>
+                <tbody id="lateTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- staff -->
+        <div data-pane-body="staff" class="hidden">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-h"><h2 id="staffFormTitle">Add a coworker</h2></div>
+            <div class="form-grid">
+              <div class="field"><label>Full name</label><input id="fName" placeholder="Jane Doe"></div>
+              <div class="field"><label>Category</label><input id="fDept" placeholder="Packing"></div>
+              <div class="field"><label>Shift start</label><input id="fStart" placeholder="08:00"></div>
+              <div class="field"><label>Shift end</label><input id="fEnd" placeholder="16:00"></div>
+              <div class="field"><label>4-digit PIN</label><input id="fPin" inputmode="numeric" maxlength="4" placeholder="0000"></div>
+            </div>
+            <div class="formrow">
+              <button class="btn primary" id="fSave">Add coworker</button>
+              <button class="btn ghost hidden" id="fCancel">Cancel</button>
+              <span class="formmsg" id="fMsg"></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Staff list</h2><div style="flex:1"></div><span class="sub" id="staffCount"></span></div>
+            <table>
+              <thead><tr><th>Coworker</th><th>Category</th><th>Shift</th><th>Status</th><th class="right">Manage</th></tr></thead>
+              <tbody id="staffTable"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- settings -->
+        <div data-pane-body="setup" class="hidden">
+          <div class="grid2">
+            <div class="card">
+              <div class="card-h"><h2>Site settings</h2></div>
+              <div class="form-grid">
+                <div class="field"><label>Site name</label><input id="sName"></div>
+                <div class="field"><label>Break lengths (minutes, comma separated)</label><input id="sAllow" placeholder="30, 15, 10, 5"></div>
+                <div class="field"><label>New manager PIN (leave blank to keep)</label><input id="sPin" inputmode="numeric" maxlength="8" placeholder="••••"></div>
+              </div>
+              <div class="formrow">
+                <button class="btn primary" id="sSave">Save settings</button>
+                <span class="formmsg" id="sMsg"></span>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>Demo &amp; maintenance</h2></div>
+              <div style="padding:16px 18px;font-size:13.5px;color:var(--muted)">
+                <p style="margin:0 0 14px">Populate the floor with realistic activity — a few breaks finished
+                  earlier today and three breaks running right now, one of them already overdue.
+                  Useful for showing the app to someone.</p>
+                <div class="formrow" style="padding:0">
+                  <button class="btn" id="dSeed">Create demo activity</button>
+                  <button class="mini-btn warn" id="dReset">Clear all break records</button>
+                  <span class="formmsg" id="dMsg"></span>
+                </div>
+                <p style="margin:16px 0 0" class="tiny">Clearing records does not delete coworkers in Supabase.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="footnote" id="serverFoot"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<div class="offline-veil hidden" id="veil">
+  <div class="box">
+    <h2>Lost connection to the server</h2>
+    <p id="veilTxt">Trying to reconnect…</p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
