@@ -1,9 +1,15 @@
 'use strict';
+const { diagnoseSupabase } = require('../env');
 
 module.exports = function registerPublicRoutes(app, { db, ok, live, sseWrite }) {
   app.get('/api/health', async (_req, res) => {
     const cfg = await db.config();
-    ok(res, { serverTime: Date.now(), version: 1, staffSource: cfg.staffSource });
+    ok(res, {
+      serverTime: Date.now(),
+      version: 1,
+      staffSource: cfg.staffSource,
+      staffError: cfg.staffSource === 'supabase' ? null : (diagnoseSupabase() || 'Supabase is not configured')
+    });
   });
   app.get('/api/state', async (_req, res) => res.json(200, await db.state()));
   app.get('/api/events', async (req, res) => {

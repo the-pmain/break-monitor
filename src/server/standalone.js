@@ -4,6 +4,7 @@
    Usage:  node src/server/standalone.js --port 8080 --seed */
 'use strict';
 const { createServer, localIPv4 } = require('./index');
+const { diagnoseSupabase } = require('./env');
 
 const argv = process.argv.slice(2);
 const arg = (name, fb) => { const i = argv.indexOf('--' + name); return i > -1 ? argv[i + 1] : fb; };
@@ -20,6 +21,10 @@ srv.listen().then(async () => {
   console.log('Break Monitor server running');
   console.log('  data     : Supabase (coworkers, breaks)');
   console.log('  staff    :', cfg.staffSource === 'supabase' ? 'Supabase' : 'unconfigured');
+  if (cfg.staffSource !== 'supabase') {
+    const why = diagnoseSupabase();
+    if (why) console.warn('  supabase :', why);
+  }
   console.log('  local    : http://localhost:' + port);
   console.log('  network  : http://' + localIPv4() + ':' + port);
   if (flag('seed')) {

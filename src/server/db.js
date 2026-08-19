@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createSupabase, toEmployee, pinsMatch } = require('./supabase');
-const { isUsableUrl, normalizeSupabaseUrl } = require('./env');
+const { isUsableUrl, normalizeSupabaseUrl, diagnoseSupabase } = require('./env');
 
 function hashPin(pin) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -326,7 +326,7 @@ function makeApi(opts = {}) {
       let historyRows = [];
       const errors = [];
       if (!sb) {
-        cfg.staffError = 'Supabase is not configured';
+        cfg.staffError = diagnoseSupabase() || 'Supabase is not configured';
       } else {
         try { staff = await api.listEmployees(); }
         catch (err) { errors.push(err.message); }
