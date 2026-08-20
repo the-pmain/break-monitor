@@ -195,3 +195,7 @@ There are no runtime npm dependencies - the server uses only Node built-ins.
 Shift schedules and rostering beyond the times on each coworker, per-employee
 break allowances, break approval workflows, multi-site support, printed reports,
 automatic updates.
+
+
+
+https://drive.google.com/file/d/1DFqH-5Jte7_-u3o-IafC-0Typ-4rR78h/view
