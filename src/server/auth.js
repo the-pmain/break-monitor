@@ -1,9 +1,39 @@
 'use strict';
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
-function createAuth(db, { bad }) {
+const MGR_TTL_MS = 365 * 24 * 3600 * 1000;
+
+function createAuth(db, { bad, sessionsPath } = {}) {
   const attempts = new Map();
   const tokens = new Map();
+
+  function loadTokens() {
+    if (!sessionsPath) return;
+    try {
+      const raw = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+      const now = Date.now();
+      Object.entries(raw || {}).forEach(([t, exp]) => {
+        if (Number(exp) > now) tokens.set(t, Number(exp));
+      });
+    } catch {}
+  }
+
+  function saveTokens() {
+    if (!sessionsPath) return;
+    try {
+      const obj = {};
+      const now = Date.now();
+      for (const [t, exp] of tokens) {
+        if (exp > now) obj[t] = exp;
+      }
+      fs.mkdirSync(path.dirname(sessionsPath), { recursive: true });
+      fs.writeFileSync(sessionsPath, JSON.stringify(obj));
+    } catch {}
+  }
+
+  loadTokens();
 
   function guard(key) {
     const rec = attempts.get(key);
@@ -19,10 +49,18 @@ function createAuth(db, { bad }) {
   function clear(key) { attempts.delete(key); }
 
   const newToken = () => crypto.randomBytes(24).toString('hex');
+  function issueToken() {
+    const t = newToken();
+    tokens.set(t, Date.now() + MGR_TTL_MS);
+    saveTokens();
+    return t;
+  }
   function validToken(t) {
     const exp = tokens.get(t);
     if (!exp) return false;
-    if (exp < Date.now()) { tokens.delete(t); return false; }
+    if (exp < Date.now()) { tokens.delete(t); saveTokens(); return false; }
+    tokens.set(t, Date.now() + MGR_TTL_MS);
+    saveTokens();
     return true;
   }
 
@@ -44,7 +82,7 @@ function createAuth(db, { bad }) {
     next();
   }
 
-  return { guard, fail, clear, newToken, tokens, validToken, withPin, manager };
+  return { guard, fail, clear, newToken, issueToken, tokens, validToken, withPin, manager };
 }
 
 module.exports = { createAuth };

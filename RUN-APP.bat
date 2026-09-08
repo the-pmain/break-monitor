@@ -7,8 +7,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist node_modules (
-  echo First run - installing dependencies, this takes a few minutes...
-  call npm install
-)
-call npm start
+echo Starting Break Monitor at http://localhost:8080
+echo Open that address in a browser. Press Ctrl+C to stop.
+echo.
+node src\server\standalone.js --port 8080
+pause

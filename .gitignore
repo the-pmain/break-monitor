@@ -4,3 +4,4 @@ dist/
 data/
 .env
 app-settings.json
+director-sessions.json

@@ -1,5 +1,5 @@
-# Cloud host for the HTTP server only (not Electron).
-# Railway / Render / Fly will inject PORT and env vars at runtime.
+# Serves the Break Monitor web SPA and API.
+# Railway / Render / Fly / Azure inject PORT and env vars at runtime.
 FROM node:20-alpine
 WORKDIR /app
 COPY src ./src

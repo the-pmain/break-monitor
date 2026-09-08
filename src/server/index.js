@@ -27,7 +27,9 @@ function createServer(opts = {}) {
   const envSb = supabaseFromEnv();
   const db = dbLib.open(null, {
     managerPin: opts.managerPin,
-    settingsPath: opts.settingsPath,
+    settingsPath: opts.settingsPath !== undefined
+      ? opts.settingsPath
+      : path.join(process.cwd(), 'app-settings.json'),
     seedSample: false,
     supabaseUrl: opts.supabaseUrl || (envSb && envSb.url),
     supabaseKey: opts.supabaseKey || (envSb && envSb.key)
@@ -37,7 +39,12 @@ function createServer(opts = {}) {
 
   const ok  = (res, body = {}) => res.json(200, { ok: true, ...body });
   const bad = (res, code, error) => res.json(code, { ok: false, error });
-  const auth = createAuth(db, { bad });
+  const auth = createAuth(db, {
+    bad,
+    sessionsPath: opts.settingsPath
+      ? path.join(path.dirname(opts.settingsPath), 'director-sessions.json')
+      : null
+  });
 
   const live = new Set();
   function sseWrite(res, payload) {

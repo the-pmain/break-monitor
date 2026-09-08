@@ -41,6 +41,19 @@ function firstRow(json) {
   return json;
 }
 
+function rowsToIds(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map(r => Number(r && r.id))
+    .filter(n => Number.isFinite(n));
+}
+
+function rpcMissing(err) {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '');
+  return err.status === 404 || code === 'PGRST202' || /could not find the function/i.test(msg);
+}
+
 function isActiveFlag(v) {
   if (v == null) return true;
   if (v === false || v === 0 || v === '0' || v === 'f' || v === 'false') return false;
@@ -91,9 +104,11 @@ function createSupabase({ url, key }) {
   };
 
   async function rest(method, path, body, extraHeaders) {
+    const hdrs = Object.assign({}, headers, extraHeaders || {});
+    if (body === undefined) delete hdrs['Content-Type'];
     const res = await fetch(base + path, {
       method,
-      headers: extraHeaders ? { ...headers, ...extraHeaders } : headers,
+      headers: hdrs,
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     const text = await res.text();
@@ -102,10 +117,15 @@ function createSupabase({ url, key }) {
       try { json = JSON.parse(text); } catch { json = { message: text }; }
     }
     if (!res.ok) {
-      const msg = (json && (json.message || json.error_description || json.error || json.hint)) || ('Supabase HTTP ' + res.status);
+      const msg = [
+        json && (json.message || json.error_description || json.error),
+        json && json.details,
+        json && json.hint
+      ].filter(Boolean).join(' — ') || ('Supabase HTTP ' + res.status);
       const err = new Error(msg);
       err.code = json && json.code;
       err.status = res.status;
+      err.details = json && json.details;
       throw err;
     }
     return json;
@@ -164,6 +184,62 @@ function createSupabase({ url, key }) {
       });
       return true;
     },
+    async deleteBreaksForCoworker(coworkerId) {
+      const id = Number(coworkerId);
+      const listed = await rest(
+        'GET',
+        '/rest/v1/breaks?coworker_id=eq.' + encodeURIComponent(id) + '&select=id'
+      );
+      const ids = (Array.isArray(listed) ? rowsToIds(listed) : []);
+      async function del(filter) {
+        const rows = await rest(
+          'DELETE',
+          '/rest/v1/breaks?' + filter,
+          undefined,
+          { Prefer: 'return=representation' }
+        );
+        return Array.isArray(rows) ? rows.length : 0;
+      }
+      let removed = await del('coworker_id=eq.' + encodeURIComponent(id));
+      const leftover = await rest(
+        'GET',
+        '/rest/v1/breaks?coworker_id=eq.' + encodeURIComponent(id) + '&select=id'
+      );
+      const leftIds = Array.isArray(leftover) ? rowsToIds(leftover) : [];
+      if (leftIds.length) {
+        removed += await del('id=in.(' + leftIds.join(',') + ')');
+      }
+      const still = await rest(
+        'GET',
+        '/rest/v1/breaks?coworker_id=eq.' + encodeURIComponent(id) + '&select=id'
+      );
+      const remain = Array.isArray(still) ? still.length : 0;
+      if (remain > 0) {
+        const err = new Error(
+          'Supabase would not delete this person\'s break records (' + remain +
+          ' still exist). Row-level security is blocking DELETE on public.breaks. Run supabase/schema.sql in the SQL editor.'
+        );
+        err.code = 'BREAKS_NOT_DELETED';
+        throw err;
+      }
+      return Math.max(removed, ids.length);
+    },
+    async countBreaksForCoworker(coworkerId) {
+      const rows = await rest(
+        'GET',
+        '/rest/v1/breaks?coworker_id=eq.' + encodeURIComponent(coworkerId) + '&select=id'
+      );
+      return Array.isArray(rows) ? rows.length : 0;
+    },
+    async removeCoworkerCascade(coworkerId) {
+      const json = await rest('POST', '/rest/v1/rpc/remove_coworker_cascade', {
+        target_id: Number(coworkerId)
+      });
+      if (json && typeof json === 'object' && !Array.isArray(json) && json.breaksRemoved != null)
+        return { ok: true, breaksRemoved: Number(json.breaksRemoved) || 0 };
+      return { ok: true, breaksRemoved: Number(json) || 0 };
+    },
+    rpcMissing,
     async removeCoworker(id) {
       await rest('DELETE', '/rest/v1/coworkers?id=eq.' + encodeURIComponent(id));
       return true;

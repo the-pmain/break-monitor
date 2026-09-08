@@ -1,6 +1,6 @@
 'use strict';
 /* A very small HTTP router built on node:http — no third-party dependencies.
-   Enough for a LAN app: static files, JSON bodies, :params, middleware. */
+   Enough for the web SPA: static files, JSON bodies, :params, middleware. */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -86,10 +86,7 @@ function readJson(req) {
   });
 }
 
-function serveStatic(dir, pathname, res) {
-  let rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-  const file = path.resolve(dir, rel);
-  if (!file.startsWith(path.resolve(dir))) { res.writeHead(403); return res.end('Forbidden'); }
+function sendFile(file, res) {
   fs.readFile(file, (err, buf) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -100,6 +97,22 @@ function serveStatic(dir, pathname, res) {
       'Cache-Control': 'no-cache'
     });
     res.end(buf);
+  });
+}
+
+function serveStatic(dir, pathname, res) {
+  let rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const root = path.resolve(dir);
+  const file = path.resolve(dir, rel);
+  if (!file.startsWith(root)) { res.writeHead(403); return res.end('Forbidden'); }
+  fs.stat(file, (err) => {
+    if (!err) return sendFile(file, res);
+    // SPA fallback: client-side routes without a file extension get index.html
+    if (path.extname(rel)) {
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end('<h1>404</h1><p>Not found. <a href="/">Go to Break Monitor</a></p>');
+    }
+    sendFile(path.join(root, 'index.html'), res);
   });
 }
 

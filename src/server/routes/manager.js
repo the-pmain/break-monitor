@@ -16,10 +16,10 @@ module.exports = function registerManagerRoutes(app, { db, ok, bad, manager, pus
     if (g.locked) return bad(res, 429, `Too many attempts. Try again in ${g.seconds}s.`);
     if (!(await db.authManager(String((req.body || {}).pin || '')))) { auth.fail('mgr'); return bad(res, 401, 'Incorrect PIN'); }
     auth.clear('mgr');
-    const t = auth.newToken();
-    auth.tokens.set(t, Date.now() + 8 * 3600 * 1000);
-    ok(res, { token: t });
+    ok(res, { token: auth.issueToken() });
   });
+
+  app.get('/api/manager/session', manager, (_req, res) => ok(res, { director: true }));
 
   app.post('/api/manager/break/:id/end', manager, async (req, res) => {
     const r = await db.endBreakById(Number(req.params.id), 'manager');
@@ -77,9 +77,17 @@ module.exports = function registerManagerRoutes(app, { db, ok, bad, manager, pus
     } catch (err) { return bad(res, 400, err.message); }
   });
 
+  app.get('/api/manager/employees/:id/breaks', manager, async (req, res) => {
+    const emp = await db.getEmployee(Number(req.params.id));
+    if (!emp) return bad(res, 404, 'Not found');
+    ok(res, { count: await db.employeeBreakCount(Number(req.params.id)) });
+  });
+
   app.delete('/api/manager/employees/:id', manager, async (req, res) => {
     try {
-      ok(res, { removed: await db.removeEmployee(Number(req.params.id)) });
+      const r = await db.removeEmployee(Number(req.params.id));
+      if (!r.ok) return bad(res, 404, r.error || 'Not found');
+      ok(res, { removed: true, id: r.id, name: r.name, breaksRemoved: r.breaksRemoved || 0 });
       pushLater();
     } catch (err) { return bad(res, 400, err.message); }
   });

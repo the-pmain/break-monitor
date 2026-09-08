@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/* Run the Break Monitor server without Electron — handy for testing or for
-   running it as a Windows service / on a headless box.
+/* Break Monitor web server — serves the SPA and JSON API.
    Usage:  node src/server/standalone.js --port 8080 --seed */
 'use strict';
+const path = require('path');
 const { createServer, localIPv4 } = require('./index');
 const { diagnoseSupabase } = require('./env');
 
@@ -11,14 +11,16 @@ const arg = (name, fb) => { const i = argv.indexOf('--' + name); return i > -1 ?
 const flag = name => argv.includes('--' + name);
 
 const port = Number(arg('port', process.env.PORT || 8080));
+const settingsPath = arg('settings') || path.join(process.cwd(), 'app-settings.json');
 
 const srv = createServer({
   port, seedSample: flag('seed'), managerPin: arg('manager-pin'),
+  settingsPath,
   supabaseUrl: arg('supabase-url'), supabaseKey: arg('supabase-key')
 });
 srv.listen().then(async () => {
   const cfg = await srv.db.config();
-  console.log('Break Monitor server running');
+  console.log('Break Monitor web app running');
   console.log('  data     : Supabase (coworkers, breaks)');
   console.log('  staff    :', cfg.staffSource === 'supabase' ? 'Supabase' : 'unconfigured');
   if (cfg.staffSource !== 'supabase') {

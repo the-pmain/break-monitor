@@ -4,25 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Break Monitor</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand">
-      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.4 1.6M9 2h6"/></svg></span>
-      <span id="siteName">Break Monitor</span>
+    <div class="shell topbar-inner">
+      <a class="brand" href="/staff">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.4 1.6M9 2h6"/></svg></span>
+        <span id="siteName">Break Monitor</span>
+      </a>
+      <div class="tabs" role="tablist">
+        <a role="tab" id="tab-kiosk" href="/staff" aria-selected="true">Staff</a>
+        <a role="tab" id="tab-mgr" href="/director/live" aria-selected="false">Director</a>
+      </div>
+      <div class="spacer"></div>
+      <div class="conn" id="conn"><span class="d2"></span><span id="connTxt">Connecting…</span></div>
+      <div class="chip"><span class="clock num" id="wallclock">--:--</span></div>
     </div>
-    <div class="tabs" role="tablist">
-      <button role="tab" id="tab-kiosk" aria-selected="true">Staff</button>
-      <button role="tab" id="tab-mgr" aria-selected="false">Director</button>
-    </div>
-    <div class="spacer"></div>
-    <div class="conn" id="conn"><span class="d2"></span><span id="connTxt">Connecting…</span></div>
-    <div class="chip"><span class="clock num" id="wallclock">--:--</span></div>
   </header>
 
   <main>
+    <div class="shell">
     <!-- ================= EMPLOYEE ================= -->
     <section id="view-kiosk">
       <div class="kiosk hidden" id="k-lock">
@@ -45,7 +48,7 @@
           <div class="pin-dots" id="pinDots"><span></span><span></span><span></span><span></span></div>
           <div class="pad" id="pinPad"></div>
           <div class="err" id="pinErr"></div>
-          <button class="btn ghost" style="margin-top:8px" id="pinBack">← Back to staff list</button>
+          <a class="btn ghost" style="margin-top:8px" id="pinBack" href="/staff">← Back to staff list</a>
         </div>
       </div>
 
@@ -67,11 +70,11 @@
 
       <div class="hidden" id="m-board">
         <div class="subtabs" role="tablist">
-          <button role="tab" data-pane="live"    aria-selected="true">Live floor</button>
-          <button role="tab" data-pane="history" aria-selected="false">History</button>
-          <button role="tab" data-pane="late"    aria-selected="false" class="tab-late">Late breaks<span class="late-count hidden" id="lateTabCount"></span></button>
-          <button role="tab" data-pane="staff"   aria-selected="false">Staff</button>
-          <button role="tab" data-pane="setup"   aria-selected="false">Settings</button>
+          <a role="tab" href="/director/live" data-pane="live" aria-selected="true">Live floor</a>
+          <a role="tab" href="/director/history" data-pane="history" aria-selected="false">History</a>
+          <a role="tab" href="/director/late" data-pane="late" aria-selected="false" class="tab-late">Late breaks<span class="late-count hidden" id="lateTabCount"></span></a>
+          <a role="tab" href="/director/staff" data-pane="staff" aria-selected="false">Staff</a>
+          <a role="tab" href="/director/settings" data-pane="settings" aria-selected="false">Settings</a>
         </div>
 
         <!-- live -->
@@ -172,7 +175,7 @@
         </div>
 
         <!-- settings -->
-        <div data-pane-body="setup" class="hidden">
+        <div data-pane-body="settings" class="hidden">
           <div class="grid2">
             <div class="card">
               <div class="card-h"><h2>Site settings</h2></div>
@@ -206,10 +209,40 @@
         <div class="footnote" id="serverFoot"></div>
       </div>
     </section>
+
+    <section id="view-404" class="hidden">
+      <div class="kiosk">
+        <div class="kiosk-head">
+          <h1>Page not found</h1>
+          <p>That address is not a Break Monitor screen.</p>
+        </div>
+        <div class="row-actions">
+          <a class="btn primary" href="/staff">Staff sign-in</a>
+          <a class="btn ghost" href="/director/live">Director dashboard</a>
+        </div>
+      </div>
+    </section>
+    </div>
   </main>
 </div>
 
 <div class="toasts" id="toasts"></div>
+
+<div class="modal-veil hidden" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-busy="false">
+  <div class="modal">
+    <div class="modal-busy hidden" id="confirmBusy">
+      <div class="spin" aria-hidden="true"></div>
+      <span id="confirmBusyLabel">Working…</span>
+    </div>
+    <h2 id="confirmTitle">Remove coworker?</h2>
+    <p id="confirmLead"></p>
+    <p class="modal-warn" id="confirmWarn"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn ghost" id="confirmCancel">Cancel</button>
+      <button type="button" class="btn danger" id="confirmOk">Remove</button>
+    </div>
+  </div>
+</div>
 
 <div class="offline-veil hidden" id="veil">
   <div class="box">
@@ -218,6 +251,7 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="/router.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

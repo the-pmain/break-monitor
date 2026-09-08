@@ -246,20 +246,42 @@ function makeApi(opts = {}) {
       coworkerCache = { at: 0, rows: [] };
       return true;
     },
+    async employeeBreakCount(id) {
+      requireSb();
+      return sb.countBreaksForCoworker(Number(id));
+    },
     async removeEmployee(id) {
       requireSb();
-      const ob = await sb.openBreak(id);
-      if (ob) await sb.endBreak(ob.id, Date.now(), 'manager');
+      const empId = Number(id);
+      const emp = await api.getEmployee(empId);
+      if (!emp) return { ok: false, error: 'Not found' };
+      let breaksRemoved = 0;
+      let removedViaRpc = false;
       try {
-        await sb.removeCoworker(id);
+        const r = await sb.removeCoworkerCascade(empId);
+        removedViaRpc = true;
+        breaksRemoved = (r && r.breaksRemoved) || 0;
       } catch (err) {
-        if (err.code === '23503')
-          throw new Error('This person has break records, so they cannot be removed from coworkers.');
-        throw err;
+        if (!sb.rpcMissing(err)) throw err;
+      }
+      if (!removedViaRpc) {
+        breaksRemoved = await sb.deleteBreaksForCoworker(empId);
+        try {
+          await sb.removeCoworker(empId);
+        } catch (err) {
+          if (err.code === '23503' || /foreign key|still referenced/i.test(err.message || '')) {
+            throw new Error(
+              'Postgres blocked the delete (foreign key breaks_coworker_id_fkey). ' +
+              'Break rows still point at this person. Run supabase/schema.sql so DELETE is allowed on breaks and the FK uses ON DELETE CASCADE. ' +
+              (err.message || '')
+            );
+          }
+          throw err;
+        }
       }
       coworkerCache = { at: 0, rows: [] };
       bustActivity();
-      return true;
+      return { ok: true, id: empId, name: emp.name, breaksRemoved };
     },
 
     async startBreak(id, allowanceMin, flags = {}) {

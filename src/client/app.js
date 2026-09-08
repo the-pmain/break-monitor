@@ -9,15 +9,91 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 
 /* ---------------- api ---------------- */
 const BASE = '';
+const MGR_KEY = 'bm-director-session';
 let mgrToken = null;
+let mgrPin = null;
+
+function persistDirector() {
+  try {
+    if (!mgrToken) localStorage.removeItem(MGR_KEY);
+    else localStorage.setItem(MGR_KEY, JSON.stringify({ token: mgrToken, pin: mgrPin || undefined }));
+  } catch {}
+}
+
+function setDirectorSession(token, pin) {
+  mgrToken = token;
+  if (pin) mgrPin = String(pin);
+  persistDirector();
+}
+
+function clearDirectorSession() {
+  mgrToken = null;
+  mgrPin = null;
+  persistDirector();
+}
+
+async function loginDirector(pin) {
+  const res = await fetch(BASE + '/api/manager/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: String(pin) })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false || !json.token) throw new Error(json.error || 'Incorrect PIN');
+  setDirectorSession(json.token, pin);
+  return json;
+}
+
+async function restoreDirectorSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(MGR_KEY) || 'null'); } catch {}
+  if (!saved || (!saved.token && !saved.pin)) return;
+  if (saved.pin) mgrPin = String(saved.pin);
+  if (saved.token) {
+    mgrToken = saved.token;
+    try {
+      const res = await fetch(BASE + '/api/manager/session', {
+        headers: { 'x-manager-token': mgrToken }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.ok !== false) {
+        persistDirector();
+        return;
+      }
+    } catch {}
+    mgrToken = null;
+  }
+  if (mgrPin && /^\d{4,8}$/.test(mgrPin)) {
+    try { await loginDirector(mgrPin); } catch { clearDirectorSession(); }
+  } else {
+    clearDirectorSession();
+  }
+}
 
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (mgrToken) headers['x-manager-token'] = mgrToken;
-  const res = await fetch(BASE + path, { ...opts, headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const res = await fetch(BASE + path, {
+    method: opts.method,
+    headers,
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
   let json = {};
   try { json = await res.json(); } catch {}
-  if (!res.ok || json.ok === false) throw new Error(json.error || ('Request failed (' + res.status + ')'));
+  if (res.status === 401 && path.indexOf('/api/manager/') === 0 && path !== '/api/manager/login' && mgrPin && !opts._retried) {
+    try {
+      await loginDirector(mgrPin);
+      return api(path, Object.assign({}, opts, { _retried: true }));
+    } catch {
+      clearDirectorSession();
+    }
+  }
+  if (!res.ok || json.ok === false) {
+    if (res.status === 401 && session && opts.body && sameId(opts.body.employeeId, session.id)) {
+      clearSession();
+    }
+    throw new Error(json.error || ('Request failed (' + res.status + ')'));
+  }
   return json;
 }
 
@@ -89,6 +165,35 @@ function shiftProgress(e) {
   return 'Outside rostered hours';
 }
 
+function parseHm(s) {
+  const m = String(s || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function onRosterNow(e) {
+  if (!e || e.active === false) return false;
+  const startMin = parseHm(e.shiftStart);
+  const endMin = parseHm(e.shiftEnd);
+  if (startMin == null || endMin == null) return true;
+  const d = new Date(now());
+  const nowMin = d.getHours() * 60 + d.getMinutes();
+  if (startMin === endMin) return true;
+  if (startMin > endMin) return nowMin >= startMin || nowMin < endMin;
+  return nowMin >= startMin && nowMin < endMin;
+}
+
+function personStatus(e) {
+  if (e && e.break && e.break.id != null) {
+    return remaining(e) < 0
+      ? { key: 'overdue', color: '#e05555', label: 'Break overdue' }
+      : { key: 'break', color: '#c5cdd8', label: 'On break' };
+  }
+  if (e && e.active === false) return { key: 'left', color: '#737D8C', label: 'Left for the day' };
+  if (onRosterNow(e)) return { key: 'working', color: '#6ee7a8', label: 'On shift' };
+  return { key: 'off', color: '#737D8C', label: 'Off shift' };
+}
+
 const COLORS = ['#3d4f6f','#4a5d82','#2e3a52','#5c6b80','#1e3250','#6b7a90','#252d3a','#8b96a8'];
 const initials = n => String(n).trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 const colorOf  = id => COLORS[(Number(id) - 1) % COLORS.length];
@@ -105,10 +210,154 @@ function toast(kind, title, body) {
                      setTimeout(() => n.remove(), 320); }, 5200);
 }
 
+function setConfirmBusy(on, label) {
+  const veil = $('#confirmModal');
+  const busy = $('#confirmBusy');
+  const ok = $('#confirmOk');
+  const cancel = $('#confirmCancel');
+  if (veil) {
+    veil.classList.toggle('is-busy', !!on);
+    veil.setAttribute('aria-busy', on ? 'true' : 'false');
+  }
+  if (busy) {
+    busy.classList.toggle('hidden', !on);
+    const txt = $('#confirmBusyLabel');
+    if (txt && label) txt.textContent = label;
+  }
+  if (ok) ok.disabled = !!on;
+  if (cancel) cancel.disabled = !!on;
+}
+
+function paintConfirm({ title, lead, warn, okLabel }) {
+  $('#confirmTitle').textContent = title || 'Are you sure?';
+  $('#confirmLead').textContent = lead || '';
+  const warnEl = $('#confirmWarn');
+  warnEl.textContent = warn || '';
+  warnEl.classList.toggle('hidden', !warn);
+  $('#confirmOk').textContent = okLabel || 'Confirm';
+}
+
+function askConfirm({ title, lead, warn, okLabel, prepare, prepareLabel, onConfirm, confirmBusy }) {
+  return new Promise(resolve => {
+    const veil = $('#confirmModal');
+    if (!veil) { resolve(window.confirm(title || 'Are you sure?')); return; }
+    let settled = false;
+    let locked = false;
+    paintConfirm({ title, lead, warn, okLabel });
+    setConfirmBusy(false);
+    veil.classList.remove('hidden');
+
+    const finish = yes => {
+      if (settled) return;
+      if (locked) return;
+      settled = true;
+      setConfirmBusy(false);
+      veil.classList.add('hidden');
+      $('#confirmOk').onclick = null;
+      $('#confirmCancel').onclick = null;
+      veil.onclick = null;
+      document.removeEventListener('keydown', onKey);
+      resolve(!!yes);
+    };
+
+    const onKey = e => {
+      if (e.key === 'Escape' && !locked) finish(false);
+    };
+    document.addEventListener('keydown', onKey);
+    $('#confirmCancel').onclick = () => finish(false);
+    veil.onclick = e => { if (e.target === veil && !locked) finish(false); };
+    $('#confirmOk').onclick = async () => {
+      if (locked || settled) return;
+      if (!onConfirm) { finish(true); return; }
+      locked = true;
+      setConfirmBusy(true, confirmBusy || 'Please wait…');
+      try {
+        await onConfirm();
+        locked = false;
+        finish(true);
+      } catch (err) {
+        locked = false;
+        setConfirmBusy(false);
+        toast('', 'Could not remove', err.message);
+      }
+    };
+    $('#confirmCancel').focus();
+
+    if (prepare) {
+      setConfirmBusy(true, prepareLabel || 'Please wait…');
+      Promise.resolve(prepare()).then(extra => {
+        if (settled) return;
+        if (extra) paintConfirm({
+          title: extra.title != null ? extra.title : title,
+          lead: extra.lead != null ? extra.lead : lead,
+          warn: extra.warn != null ? extra.warn : warn,
+          okLabel: extra.okLabel != null ? extra.okLabel : okLabel
+        });
+        setConfirmBusy(false);
+        $('#confirmCancel').focus();
+      }).catch(() => {
+        if (settled) return;
+        setConfirmBusy(false);
+      });
+    }
+  });
+}
+
 /* ================= EMPLOYEE KIOSK ================= */
-let session = null;            // {id, pin}
+const SESSION_KEY = 'bm-employee-session';
+let session = null;            // {id, pin, leaveRoom}
+let lastHomeKey = '';
 let pinBuf = '', pinTarget = null;
 const showK = id => ['#k-lock','#k-pin','#k-home'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+const staffPath = () => session ? '/staff/' + session.id : '/staff';
+
+function readStoredSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    const id = Number(o && o.id);
+    const pin = String((o && o.pin) || '');
+    if (!Number.isFinite(id) || id < 1 || !/^\d{4}$/.test(pin)) return null;
+    return { id, pin, leaveRoom: o.leaveRoom !== false };
+  } catch { return null; }
+}
+
+function persistSession() {
+  try {
+    if (!session) localStorage.removeItem(SESSION_KEY);
+    else localStorage.setItem(SESSION_KEY, JSON.stringify({
+      id: session.id, pin: session.pin, leaveRoom: session.leaveRoom !== false
+    }));
+  } catch {}
+}
+
+function setSession(next) {
+  session = next;
+  persistSession();
+}
+
+function clearSession() {
+  session = null;
+  lastHomeKey = '';
+  persistSession();
+}
+
+async function restoreEmployeeSession() {
+  const saved = readStoredSession();
+  if (!saved) return;
+  try {
+    const res = await fetch(BASE + '/api/employee/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: saved.id, pin: saved.pin })
+    });
+    if (res.status === 401) { clearSession(); return; }
+    setSession(saved);
+  } catch {
+    setSession(saved);
+  }
+}
 
 function renderPeople() {
   const g = $('#peopleGrid');
@@ -121,15 +370,27 @@ function renderPeople() {
   $('#noStaff').innerHTML = empty;
   $('#noStaff').classList.toggle('hidden', ST.employees.length > 0);
   g.innerHTML = ST.employees.map(e => {
-    const over = e.status === 'break' && remaining(e) < 0;
-    const meta = e.status === 'off'   ? ['#737D8C', 'Off shift']
-               : e.status === 'left'  ? ['#737D8C', 'Left for the day']
-               : e.status === 'break' ? (over ? ['#e05555', 'Break overdue'] : ['#c5cdd8', 'On break'])
-               : ['#6ee7a8', 'On shift'];
-    return '<button class="person" data-pid="' + e.id + '">' + avatar(e) +
+    const st = personStatus(e);
+    return '<a class="person" href="/staff/' + e.id + '" data-eid="' + esc(e.id) + '" data-st="' + st.key + '">' + avatar(e) +
       '<span><span class="nm">' + esc(e.name) + '</span>' +
-      '<span class="mt"><i style="background:' + meta[0] + '"></i>' + meta[1] + '</span></span></button>';
+      '<span class="mt"><i style="background:' + st.color + '"></i><span class="st">' + esc(st.label) + '</span></span></span></a>';
   }).join('');
+}
+
+function paintPeopleStatus() {
+  const g = $('#peopleGrid');
+  if (!g || $('#k-lock').classList.contains('hidden')) return;
+  $$('#peopleGrid .person').forEach(el => {
+    const e = empById(el.dataset.eid);
+    if (!e) return;
+    const st = personStatus(e);
+    if (el.dataset.st === st.key) return;
+    el.dataset.st = st.key;
+    const i = el.querySelector('.mt i');
+    const lab = el.querySelector('.mt .st');
+    if (i) i.style.background = st.color;
+    if (lab) lab.textContent = st.label;
+  });
 }
 
 function buildPad(container, onKey) {
@@ -160,13 +421,12 @@ async function pinKey(k) {
   try {
     await api('/api/employee/verify', { method: 'POST', body: { employeeId: pinTarget, pin } });
     const emp = empById(pinTarget);
-    session = {
+    lastHomeKey = '';
+    setSession({
       id: pinTarget, pin,
       leaveRoom: emp && emp.break ? !!emp.break.isRoomLeaved : true
-    };
-    lastHomeKey = '';
-    renderHome(); showK('#k-home');
-    lastHomeKey = homeKey();
+    });
+    navigate('/staff/' + pinTarget, { replace: true });
   } catch (err) {
     $('#pinErr').textContent = err.message;
     $('#pinDots').classList.add('shake');
@@ -306,7 +566,7 @@ function allowanceGrid() {
 function renderHome() {
   if (!session) return;
   const e = empById(session.id);
-  if (!e) { session = null; showK('#k-lock'); return; }
+  if (!e) { clearSession(); navigate('/staff', { replace: true }); return; }
   const c = $('#homeCard');
   const head = '<div class="home-top">' + avatar(e, 52) +
     '<span><h1>' + esc(e.name) + '</h1><div class="sh">' +
@@ -350,7 +610,7 @@ function leaveBlock() {
 $('#homeCard').addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || !session || homeBusy) return;
   const act = b.dataset.act;
-  if (act === 'signout') { session = null; lastHomeKey = ''; renderPeople(); showK('#k-lock'); return; }
+  if (act === 'signout') { clearSession(); navigate('/staff'); return; }
   const body = { employeeId: session.id, pin: session.pin };
   const mins = Number(b.dataset.m);
   const labels = {
@@ -389,7 +649,10 @@ $('#homeCard').addEventListener('click', async e => {
     toast('', 'Something went wrong', err.message);
   } finally {
     setHomeBusy(false);
-    if (session) renderHome(); else { renderPeople(); showK('#k-lock'); }
+    if (session) renderHome();
+    else if (currentRoute && (currentRoute.name === 'employee' || currentRoute.name === 'staff-home')) {
+      navigate('/staff', { replace: true });
+    } else { renderPeople(); showK('#k-lock'); }
   }
 });
 
@@ -403,14 +666,13 @@ $('#homeCard').addEventListener('change', e => {
   }
   const room = !!($('#homeCard [data-flag="room"]') && $('#homeCard [data-flag="room"]').checked);
   session.leaveRoom = room;
+  persistSession();
   $$('#homeCard .flag').forEach(el => {
     const inp = el.querySelector('input');
     el.classList.toggle('on', !!(inp && inp.checked));
   });
 });
 
-$('#peopleGrid').addEventListener('click', e => { const b = e.target.closest('.person'); if (b) openPin(Number(b.dataset.pid)); });
-$('#pinBack').addEventListener('click', () => { renderPeople(); showK('#k-lock'); });
 buildPad($('#pinPad'), pinKey);
 
 /* ================= MANAGER ================= */
@@ -424,11 +686,10 @@ buildPad($('#mgrPad'), async k => {
   if (mgrBuf.length !== 4) return;
   const pin = mgrBuf; mgrBuf = '';
   try {
-    const r = await api('/api/manager/login', { method: 'POST', body: { pin } });
-    mgrToken = r.token;
-    $('#m-gate').classList.add('hidden'); $('#m-board').classList.remove('hidden');
+    await loginDirector(pin);
     ensureLateDates();
-    renderManager(); loadStaff(); loadSettings();
+    loadSettings();
+    applyRoute(Router.parse(location.pathname));
   } catch (err) {
     $('#mgrErr').textContent = err.message;
     $('#mgrDots').classList.add('shake');
@@ -437,13 +698,6 @@ buildPad($('#mgrPad'), async k => {
   paintDots('#mgrDots', 0);
 });
 
-$$('.subtabs button').forEach(b => b.addEventListener('click', () => {
-  $$('.subtabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
-  $$('[data-pane-body]').forEach(p => p.classList.toggle('hidden', p.dataset.paneBody !== b.dataset.pane));
-  if (b.dataset.pane === 'history') loadHistory();
-  if (b.dataset.pane === 'late') loadLate();
-  if (b.dataset.pane === 'staff') loadStaff();
-}));
 
 function renderManager() {
   if (!mgrToken) return;
@@ -750,9 +1004,36 @@ $('#staffTable').addEventListener('click', async e => {
   }
   if (del) {
     const emp = (window.__staff || []).find(x => x.id === Number(del.dataset.del)); if (!emp) return;
-    if (!confirm('Remove ' + emp.name + ' from coworkers?\n\nTheir past break records are kept for reporting, but they will no longer appear on the sign-in screen.')) return;
-    try { await api('/api/manager/employees/' + emp.id, { method: 'DELETE' }); toast('good', 'Removed', emp.name + ' is no longer active.'); loadStaff(); refresh(); }
-    catch (err) { toast('', 'Could not remove', err.message); }
+    const veil = $('#confirmModal');
+    if (veil && !veil.classList.contains('hidden')) return;
+    await askConfirm({
+      title: 'Remove ' + emp.name + '?',
+      lead: 'They will be removed from the sign-in screen and the live floor.',
+      warn: 'Any break records for this person will also be deleted. This cannot be undone.',
+      okLabel: 'Remove coworker',
+      prepareLabel: 'Checking break records…',
+      prepare: async () => {
+        const r = await api('/api/manager/employees/' + emp.id + '/breaks');
+        const count = Number(r.count) || 0;
+        const warn = count === 1
+          ? 'This will also delete their 1 break record. This cannot be undone.'
+          : count > 0
+            ? 'This will also delete all ' + count + ' of their break records. This cannot be undone.'
+            : 'Any break records for this person will also be deleted. This cannot be undone.';
+        return { warn };
+      },
+      confirmBusy: 'Removing ' + emp.name + '…',
+      onConfirm: async () => {
+        const r = await api('/api/manager/employees/' + emp.id, { method: 'DELETE' });
+        const n = Number(r.breaksRemoved) || 0;
+        toast('good', 'Removed', emp.name + (n
+          ? ' · ' + n + ' break' + (n === 1 ? '' : 's') + ' deleted'
+          : ' and their breaks were removed.'));
+        if (session && sameId(session.id, emp.id)) clearSession();
+        if (editingId === emp.id) resetStaffForm();
+        loadStaff(); refresh();
+      }
+    });
   }
 });
 
@@ -824,24 +1105,139 @@ $('#dReset').addEventListener('click', async () => {
   catch (err) { toast('', 'Could not clear records', err.message); }
 });
 
-/* ================= tabs, polling, tick ================= */
-function switchTab(which) {
-  const k = which === 'kiosk';
-  $('#tab-kiosk').setAttribute('aria-selected', String(k));
-  $('#tab-mgr').setAttribute('aria-selected', String(!k));
-  $('#view-kiosk').classList.toggle('hidden', !k);
-  $('#view-mgr').classList.toggle('hidden', k);
-  if (!k) {
+/* ================= routes, polling, tick ================= */
+const Router = window.BMRouter;
+let currentRoute = Router.parse('/staff');
+
+function showMain(view) {
+  $('#view-kiosk').classList.toggle('hidden', view !== 'kiosk');
+  $('#view-mgr').classList.toggle('hidden', view !== 'mgr');
+  $('#view-404').classList.toggle('hidden', view !== '404');
+  $('#tab-kiosk').setAttribute('aria-selected', String(view === 'kiosk'));
+  $('#tab-mgr').setAttribute('aria-selected', String(view === 'mgr'));
+  const staffHref = staffPath();
+  $('#tab-kiosk').setAttribute('href', staffHref);
+  const brand = $('.brand');
+  if (brand) brand.setAttribute('href', '/staff');
+}
+
+function setDocTitle() {
+  const site = (ST.config && ST.config.siteName) || 'Break Monitor';
+  if (!currentRoute || currentRoute.name === 'staff') document.title = site;
+  else if (currentRoute.name === 'not-found') document.title = 'Not found · ' + site;
+  else if (currentRoute.name === 'director') document.title = site + ' · Director';
+  else if (currentRoute.name === 'employee') {
+    const e = empById(currentRoute.employeeId);
+    const logged = session && sameId(session.id, currentRoute.employeeId);
+    document.title = site + ' · ' + (e ? e.name : 'Staff') + (logged ? '' : ' · PIN');
+  } else document.title = site + ' · Staff';
+}
+
+function showDirectorPane(pane, loadData) {
+  const id = Router.DIRECTOR_PANES.indexOf(pane) >= 0 ? pane : 'live';
+  $$('.subtabs a').forEach(x => x.setAttribute('aria-selected', String(x.dataset.pane === id)));
+  $$('[data-pane-body]').forEach(p => p.classList.toggle('hidden', p.dataset.paneBody !== id));
+  $('#tab-mgr').setAttribute('href', '/director/' + id);
+  if (!loadData) return;
+  if (id === 'history') loadHistory();
+  if (id === 'late') loadLate();
+  if (id === 'staff') loadStaff();
+}
+
+function applyRoute(route) {
+  currentRoute = route;
+  setDocTitle();
+
+  if (route.name === 'not-found') {
+    showMain('404');
+    return;
+  }
+
+  if (route.name === 'director') {
+    showMain('mgr');
+    showDirectorPane(route.pane, !!mgrToken);
     $('#m-gate').classList.toggle('hidden', !!mgrToken);
     $('#m-board').classList.toggle('hidden', !mgrToken);
-    if (mgrToken) renderManager(); else { mgrBuf = ''; paintDots('#mgrDots', 0); }
+    if (mgrToken) renderManager();
+    else { mgrBuf = ''; paintDots('#mgrDots', 0); }
+    return;
   }
+
+  showMain('kiosk');
+
+  if (route.name === 'staff') {
+    renderPeople();
+    showK('#k-lock');
+    return;
+  }
+
+  if (route.name === 'staff-home') {
+    navigate(session ? '/staff/' + session.id : '/staff', { replace: true });
+    return;
+  }
+
+  if (route.name === 'employee') {
+    const id = route.employeeId;
+    const e = empById(id);
+    if (!e) {
+      if (ST.employees.length) {
+        navigate(session ? '/staff/' + session.id : '/staff', { replace: true });
+        return;
+      }
+      renderPeople();
+      showK('#k-lock');
+      return;
+    }
+    if (session && sameId(session.id, id)) {
+      renderHome();
+      showK('#k-home');
+      lastHomeKey = homeKey();
+      return;
+    }
+    if (pinTarget !== id) openPin(id);
+    else showK('#k-pin');
+    return;
+  }
+
+  renderPeople();
+  showK('#k-lock');
 }
-$('#tab-kiosk').addEventListener('click', () => switchTab('kiosk'));
-$('#tab-mgr').addEventListener('click', () => switchTab('mgr'));
+
+function navigate(path, opts) {
+  const replace = !!(opts && opts.replace);
+  const incoming = Router.parse(path);
+  const next = incoming.name === 'not-found' ? Router.cleanPath(path) : incoming.path;
+  const route = incoming.name === 'not-found'
+    ? { name: 'not-found', path: next }
+    : incoming;
+  const cur = Router.cleanPath(location.pathname);
+  if (replace || next !== cur) {
+    if (replace) history.replaceState({ path: next }, '', next);
+    else history.pushState({ path: next }, '', next);
+  }
+  applyRoute(route);
+}
+
+function onAppLinkClick(e) {
+  if (e.defaultPrevented || e.button !== 0) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest('a[href]');
+  if (!a || a.hasAttribute('download') || a.getAttribute('target') === '_blank') return;
+  const href = a.getAttribute('href');
+  if (!href || /^(mailto:|tel:|https?:)/i.test(href)) return;
+  let url;
+  try { url = new URL(a.href, location.origin); } catch { return; }
+  if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
+  if (/\.[a-z0-9]+$/i.test(url.pathname)) return;
+  e.preventDefault();
+  navigate(url.pathname);
+}
+
+window.addEventListener('popstate', () => applyRoute(Router.parse(location.pathname)));
+document.addEventListener('click', onAppLinkClick);
 
 const alerted = new Set();
-let lastHomeKey = '';
 let live = null;
 let homeBusy = false;
 
@@ -878,7 +1274,7 @@ function applyState(s) {
   failures = 0;
   if (!online) { online = true; paintConn(); }
   $('#siteName').textContent = s.config.siteName || 'Break Monitor';
-  document.title = (s.config.siteName || 'Break Monitor');
+  setDocTitle();
   if ($('#serverFoot')) {
     const src = s.config.staffSource === 'supabase' ? ' · data from Supabase' :
       s.config.staffSource === 'unconfigured' ? ' · Supabase not configured' : '';
@@ -888,7 +1284,9 @@ function applyState(s) {
   const liveIds = new Set(ST.employees.filter(e => e.break).map(e => e.break.id));
   [...alerted].forEach(id => { if (!liveIds.has(id)) alerted.delete(id); });
 
-  if (!$('#k-lock').classList.contains('hidden')) renderPeople();
+  if (currentRoute && currentRoute.name === 'employee' && !$('#k-lock').classList.contains('hidden')) {
+    applyRoute(currentRoute);
+  } else if (!$('#k-lock').classList.contains('hidden')) renderPeople();
   if (session && !$('#k-home').classList.contains('hidden') && !homeBusy) {
     const key = homeKey();
     if (key !== lastHomeKey) { lastHomeKey = key; renderHome(); }
@@ -943,6 +1341,7 @@ function tick() {
   });
 
   if (session && !$('#k-home').classList.contains('hidden')) paintRing();
+  if (!$('#k-lock').classList.contains('hidden')) paintPeopleStatus();
   if (mgrToken && !$('#view-mgr').classList.contains('hidden') && !$('[data-pane-body="live"]').classList.contains('hidden')) renderManager();
   if (mgrToken && !$('[data-pane-body="late"]').classList.contains('hidden')) paintLateTable();
 }
@@ -952,7 +1351,15 @@ function tick() {
   await refresh();
   // don't toast for breaks that were already overdue when this screen opened
   ST.employees.forEach(e => { if (e.status === 'break' && remaining(e) <= 0) alerted.add(e.break.id); });
-  renderPeople(); showK('#k-lock'); switchTab('kiosk');
+  await restoreEmployeeSession();
+  await restoreDirectorSession();
+  if (session && ST.employees.length && !empById(session.id)) clearSession();
+  let path = location.pathname || '/staff';
+  const opened = Router.parse(path);
+  if (session && (opened.name === 'staff-home' || path === '/' || path === '')) {
+    path = '/staff/' + session.id;
+  }
+  navigate(path, { replace: true });
   $('#serverFoot').textContent = 'Break Monitor · ' + location.host +
     (ST.config && ST.config.staffSource === 'supabase' ? ' · data from Supabase' : '');
   tick();
