@@ -305,7 +305,7 @@ function askConfirm({ title, lead, warn, okLabel, prepare, prepareLabel, onConfi
 
 /* ================= EMPLOYEE KIOSK ================= */
 const SESSION_KEY = 'bm-employee-session';
-let session = null;            // {id, pin, leaveRoom}
+let session = null;            // {id, pin}
 let lastHomeKey = '';
 let pinBuf = '', pinTarget = null;
 const showK = id => ['#k-lock','#k-pin','#k-home'].forEach(s => $(s).classList.toggle('hidden', s !== id));
@@ -319,7 +319,7 @@ function readStoredSession() {
     const id = Number(o && o.id);
     const pin = String((o && o.pin) || '');
     if (!Number.isFinite(id) || id < 1 || !/^\d{4}$/.test(pin)) return null;
-    return { id, pin, leaveRoom: o.leaveRoom !== false };
+    return { id, pin };
   } catch { return null; }
 }
 
@@ -327,7 +327,7 @@ function persistSession() {
   try {
     if (!session) localStorage.removeItem(SESSION_KEY);
     else localStorage.setItem(SESSION_KEY, JSON.stringify({
-      id: session.id, pin: session.pin, leaveRoom: session.leaveRoom !== false
+      id: session.id, pin: session.pin
     }));
   } catch {}
 }
@@ -420,12 +420,8 @@ async function pinKey(k) {
   const pin = pinBuf;
   try {
     await api('/api/employee/verify', { method: 'POST', body: { employeeId: pinTarget, pin } });
-    const emp = empById(pinTarget);
     lastHomeKey = '';
-    setSession({
-      id: pinTarget, pin,
-      leaveRoom: emp && emp.break ? !!emp.break.isRoomLeaved : true
-    });
+    setSession({ id: pinTarget, pin });
     navigate('/staff/' + pinTarget, { replace: true });
   } catch (err) {
     $('#pinErr').textContent = err.message;
@@ -441,11 +437,6 @@ function byStart(a, b) {
 
 function isOverAllowance(h) {
   return (h.over || 0) > 0;
-}
-
-function todayStats(pid) {
-  const h = ST.history.filter(x => sameId(x.employeeId, pid));
-  return { count: h.length, total: h.reduce((a, b) => a + (b.taken || 0), 0) };
 }
 
 function wherePills(room) {
@@ -507,15 +498,6 @@ function nestedBreaksTable(rows) {
     '<th>Started</th><th>Ended</th><th>Where</th><th>Allowance</th><th>Taken</th><th>Result</th>' +
     '</tr></thead><tbody>' + rows.map(histBreakRow).join('') + '</tbody></table>';
 }
-function flagChecks(room, locked) {
-  const dis = locked ? ' disabled' : '';
-  const lock = locked ? ' locked' : '';
-  return '<div class="flag-grid">' +
-      '<label class="flag' + (room ? ' on' : '') + lock + '"><input type="checkbox" data-flag="room"' + (room ? ' checked' : '') + dis + '>' +
-        '<span><b>Leaving the room</b><small>Stepping away from your station</small></span></label>' +
-    '</div>';
-}
-
 const CIRC = 2 * Math.PI * 104;
 function ringHTML() {
   return '<div class="ring-wrap"><svg width="236" height="236" viewBox="0 0 236 236">' +
@@ -574,7 +556,6 @@ function renderHome() {
 
   if (e.status === 'break') {
     c.innerHTML = head + ringHTML() +
-      flagChecks(!!e.break.isRoomLeaved, true) +
       '<div class="row-actions"><button class="btn danger" data-act="end">End break &amp; return to work</button></div>' +
       leaveBlock() +
       '<div class="footnote" style="margin:16px 0 0">Your manager can see this break on the dashboard.</div>';
@@ -585,16 +566,11 @@ function renderHome() {
       '<div class="row-actions"><button class="btn primary" data-act="return">Back on shift</button>' +
       '<button class="btn ghost" data-act="signout">Sign out</button></div>';
   } else {
-    const ts = todayStats(e.id);
-    const progress = shiftProgress(e);
     const offNote = e.status === 'off'
       ? '<p class="mut" style="margin:12px 0 0">Outside rostered hours — you can still start a break.</p>'
       : '';
     c.innerHTML = head +
-      '<p class="mut" style="margin:16px 0 0">' + (progress ? esc(progress) + ' · ' : '') +
-      ts.count + ' break' + (ts.count === 1 ? '' : 's') + ' today (' + Math.round(ts.total / MIN) + ' min total)</p>' +
       offNote +
-      flagChecks(session.leaveRoom !== false) +
       '<div class="allow-label">Select a break allowance</div>' +
       allowanceGrid() +
       leaveBlock() +
@@ -629,7 +605,7 @@ $('#homeCard').addEventListener('click', async e => {
     if (act === 'start') {
       await api('/api/break/start', { method: 'POST', body: {
         ...body, allowanceMin: mins,
-        isRoomLeaved: session.leaveRoom !== false, isFloorLeaved: false
+        isRoomLeaved: true, isFloorLeaved: false
       } });
       toast('info', 'Break started', mins + ' minutes · due back ' + fmtClock(now() + mins * MIN));
     } else if (act === 'end') {
@@ -654,23 +630,6 @@ $('#homeCard').addEventListener('click', async e => {
       navigate('/staff', { replace: true });
     } else { renderPeople(); showK('#k-lock'); }
   }
-});
-
-$('#homeCard').addEventListener('change', e => {
-  const t = e.target;
-  if (!t || !t.dataset.flag || !session) return;
-  const emp = empById(session.id);
-  if (emp && emp.status === 'break') {
-    t.checked = t.dataset.flag === 'room' ? !!emp.break.isRoomLeaved : t.checked;
-    return;
-  }
-  const room = !!($('#homeCard [data-flag="room"]') && $('#homeCard [data-flag="room"]').checked);
-  session.leaveRoom = room;
-  persistSession();
-  $$('#homeCard .flag').forEach(el => {
-    const inp = el.querySelector('input');
-    el.classList.toggle('on', !!(inp && inp.checked));
-  });
 });
 
 buildPad($('#pinPad'), pinKey);
